@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { 
   LayoutDashboard, Users, CreditCard, DollarSign, MessageCircle, Calendar, Utensils, Smartphone, 
@@ -114,7 +114,19 @@ export default function App() {
   useEffect(() => {
     if (!auth) { setDbLoaded(true); setSyncStatus('offline'); return; }
     let isMounted = true; const fallbackTimer = setTimeout(() => { if (isMounted && !dbLoaded) { setDbLoaded(true); setSyncStatus('offline'); } }, 3500);
-    const initAuth = async () => { try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) { await signInWithCustomToken(auth, __initial_auth_token); } else { await signInAnonymously(auth); } } catch(e) { setSyncStatus('offline'); } };
+    const initAuth = async () => {
+  try {
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setSyncStatus('online');
+      } else {
+        setSyncStatus('offline');
+      }
+    });
+  } catch (e) {
+    setSyncStatus('offline');
+  }
+};
     initAuth(); const unsub = onAuthStateChanged(auth, (user) => { if (isMounted) { setFirebaseUser(user); clearTimeout(fallbackTimer); } }); return () => { isMounted = false; clearTimeout(fallbackTimer); unsub(); };
   }, []);
 
@@ -131,8 +143,32 @@ export default function App() {
   }, [firebaseUser]);
 
   const updateDb = (col, newData) => { const newDb = { ...dbRef.current, [col]: newData }; dbRef.current = newDb; setDb(newDb); if (firestoreDb && firebaseUser) { setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'amanah_data', col), { val: newData }, { merge: true }); } };
+const handleLogin = async (e) => {
+  e.preventDefault();
 
-  const handleLogin = (e) => { e.preventDefault(); const pwd = e.target.password.value; const user = (db?.users || INITIAL_DB.users).find(u => String(u.email || '').toLowerCase() === String(loginEmail).toLowerCase().trim()); if (!user) return triggerToast('Account not found. Switch to Sign Up.', 'error'); if (user.password && user.password !== pwd) return triggerToast('Incorrect password.', 'error'); setAuthUser(user); };
+  const email = loginEmail;
+  const pwd = e.target.password.value;
+
+  try {
+
+    await signInWithEmailAndPassword(auth, email, pwd);
+
+    const user = (db?.users || INITIAL_DB.users).find(
+      u => String(u.email || '').toLowerCase() === String(email).toLowerCase().trim()
+    );
+
+    if (user) {
+      setAuthUser(user);
+    }
+
+    triggerToast("Login successful");
+
+  } catch (error) {
+
+    triggerToast("Invalid email or password", "error");
+
+  }
+};
   const handleForgotVerifyEmail = (e) => { e.preventDefault(); const user = (db?.users || INITIAL_DB.users).find(u => String(u.email || '').toLowerCase() === String(forgotEmail).toLowerCase().trim()); if (!user) return triggerToast('No account found.', 'error'); setResetUserTarget(user); setForgotStep(1); };
   const handleForgotVerifyPhone = (e) => { e.preventDefault(); const cIn = String(forgotPhone).replace(/[^0-9]/g, ''); let isValid = false; if (resetUserTarget.role === 'admin') { if (cIn.slice(-10) === String(db?.adminSettings?.supportPhone || '').replace(/[^0-9]/g, '').slice(-10)) isValid = true; } else { const cR = (db?.restaurants || INITIAL_DB.restaurants).filter(r => (resetUserTarget.restaurantIds || []).includes(r.id)); for (const r of cR) { if (cIn.slice(-10) === String(r.phone || '').replace(/[^0-9]/g, '').slice(-10)) isValid = true; } } if (isValid) { setForgotStep(2); } else { triggerToast('Incorrect phone.', 'error'); } };
   const handleForgotResetPwd = (e) => { e.preventDefault(); const nP = String(forgotNewPwd).trim(); if(nP.length < 5) return triggerToast('Password must be 5+ chars.', 'error'); updateDb('users', (db?.users || INITIAL_DB.users).map(u => u.id === resetUserTarget.id ? { ...u, password: nP } : u)); triggerToast('Password reset successfully!'); setLoginEmail(resetUserTarget.email); setShowForgotPwd(false); setForgotStep(0); setForgotEmail(''); setForgotPhone(''); setForgotNewPwd(''); setResetUserTarget(null); };
